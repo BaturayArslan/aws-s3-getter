@@ -11,9 +11,11 @@ import re
 import boto3
 
 from config import config
+
+a = Path(os.getcwd())
 #  Parse Config.ini file
 #  Add prefix
-# TODO Add regex
+#  Add regex
 # TODO add sql query
 # TODO add paginator
 # TODO zip dowloanded files
@@ -29,7 +31,11 @@ def set_paths() -> None:
 
 def create_file(key: str) -> None:
     path = Path(os.getcwd()).joinpath("s3-folder", key)
-    directory_path = path.parent
+    if key.endswith("/"):
+        directory_path = path
+    else:
+        directory_path = path.parent
+
     if directory_path.is_dir():
         path.touch(exist_ok=True)
     else:
@@ -76,8 +82,8 @@ async def main():
     check_response(response)
 
     for obj in response["Contents"]:
-        path = create_file(obj["Key"])
         if check_key(obj["Key"], config):
+            path = create_file(obj["Key"])
             tasks.append(
                 (loop.create_task(download_file(bucket_name, obj["Key"], path)), obj["Key"]))
 
