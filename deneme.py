@@ -6,11 +6,11 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import threading
 from configparser import ConfigParser
-from config import config
+import re
 
 import boto3
 
-
+from config import config
 #  Parse Config.ini file
 #  Add prefix
 # TODO Add regex
@@ -43,16 +43,20 @@ def check_response(response):
     if response["KeyCount"] == 0:
         sys.exit("Folder  NOT Found With this Prefix : {}".format(
             response["Prefix"]))
-    
-def check_key(key):
-    return True
+
+
+def check_key(key: str, config):
+    if re.match(config["pattern"], key):
+        return True
+    else:
+        return False
 
 
 async def main():
     s3 = boto3.client("s3")
     print(config)
     bucket_name = config["bucket"]
-    executor = ThreadPoolExecutor()
+    executor = ThreadPoolExecutor(max_workers=5)
     set_paths()
     loop = asyncio.get_event_loop()
 
@@ -73,14 +77,13 @@ async def main():
 
     for obj in response["Contents"]:
         path = create_file(obj["Key"])
-        if check_key(obj["Key"]):
+        if check_key(obj["Key"], config):
             tasks.append(
                 (loop.create_task(download_file(bucket_name, obj["Key"], path)), obj["Key"]))
 
     for task, key in tasks:
         await task
         print("Downloaded : {}".format(key))
-
 
 if __name__ == '__main__':
     asyncio.run(main())
