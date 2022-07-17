@@ -73,19 +73,20 @@ async def main():
             return await loop.run_in_executor(executor, bounded_f)
         return io_wrapper
 
-    list_objects_v2 = aio(s3.list_objects_v2)
     download_file = aio(s3.download_file)
+    s3_paginator = s3.get_paginator("list_objects_v2")
+    s3_iterator = s3_paginator.paginate(
+        Bucket=bucket_name, Prefix=config["prefix"], PaginationConfig={"PageSize": 100})
 
-    response = await list_objects_v2(Bucket=bucket_name, Prefix=config["prefix"])
     tasks = []
 
-    check_response(response)
-
-    for obj in response["Contents"]:
-        if check_key(obj["Key"], config):
-            path = create_file(obj["Key"])
-            tasks.append(
-                (loop.create_task(download_file(bucket_name, obj["Key"], path)), obj["Key"]))
+    # check_response(response)
+    for page in s3_iterator:
+        for obj in page["Contents"]:
+            if check_key(obj["Key"], config):
+                path = create_file(obj["Key"])
+                tasks.append(
+                    (loop.create_task(download_file(bucket_name, obj["Key"], path)), obj["Key"]))
 
     for task, key in tasks:
         await task
