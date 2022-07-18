@@ -1,35 +1,37 @@
+import concurrent.futures
 import sys
 import os
 import asyncio
 import functools
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
-import threading
-from configparser import ConfigParser
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import re
+from zipfile import ZipFile
 
 import boto3
 
 from config import config
 
 a = Path(os.getcwd())
+
+
 #  Parse Config.ini file
 #  Add prefix
 #  Add regex
 # TODO add sql query
-# TODO add paginator
-# TODO zip dowloanded files
+#  add paginator
+#  zip dowloanded files
 # TODO multiprocess for zip files
 
 
-def set_paths() -> None:
+def set_paths() -> Path:
     cwd = os.getcwd()
     path = Path(cwd) / "s3-folder"
     path.mkdir(exist_ok=True)
     return path
 
 
-def create_file(key: str) -> None:
+def create_file(key: str) -> str:
     path = Path(os.getcwd()).joinpath("s3-folder", key)
     if key.endswith("/"):
         directory_path = path
@@ -58,11 +60,18 @@ def check_key(key: str, config):
         return False
 
 
+def zip_file(path: Path):
+    with ZipFile("s3-folder.zip", "a") as zip:
+        zip.write(path)
+    print(f"Zipped :: {str(path)}",flush=True)
+
+
 async def main():
     s3 = boto3.client("s3")
     print(config)
     bucket_name = config["bucket"]
     executor = ThreadPoolExecutor(max_workers=5)
+    process_executor = ProcessPoolExecutor(max_workers=4)
     set_paths()
     loop = asyncio.get_event_loop()
 
@@ -71,6 +80,7 @@ async def main():
             bounded_f = functools.partial(f, *args, **kwargs)
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(executor, bounded_f)
+
         return io_wrapper
 
     download_file = aio(s3.download_file)
@@ -87,10 +97,14 @@ async def main():
                 path = create_file(obj["Key"])
                 tasks.append(
                     (loop.create_task(download_file(bucket_name, obj["Key"], path)), obj["Key"]))
-
+    zip_processes = []
     for task, key in tasks:
         await task
-        print("Downloaded : {}".format(key))
+        print(f"{key} gonna zip")
+        zip_processes.append(process_executor.submit(zip_file,Path("s3-folder").joinpath(key)))
+
+    for zipped in concurrent.futures.as_completed(zip_processes):
+        pass
 
 if __name__ == '__main__':
     asyncio.run(main())

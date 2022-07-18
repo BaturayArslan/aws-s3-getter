@@ -3,9 +3,6 @@ from configparser import ConfigParser
 import os
 from collections import defaultdict
 
-ACCEPTED_CONFİG_FILE = {"secrets": ["key", "passphrase", "secret"]}
-
-
 class Configs:
     def __init__(self):
         self._file_path: Optional[str] = None
@@ -38,7 +35,7 @@ class Configs:
     def read(self):
         self.cparser.read(self._file_path)
 
-    def _check_path(self, path: str) -> str:
+    def _check_path(self, path: str) -> bool:
         if path.startswith("/"):
             return os.path.isfile(path)
         else:
