@@ -1,8 +1,8 @@
-import concurrent.futures
 import sys
 import os
 import asyncio
 import functools
+import time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import re
@@ -11,17 +11,6 @@ from zipfile import ZipFile
 import boto3
 
 from config import config
-
-a = Path(os.getcwd())
-
-
-#  Parse Config.ini file
-#  Add prefix
-#  Add regex
-# TODO add sql query
-#  add paginator
-#  zip dowloanded files
-# TODO multiprocess for zip files
 
 
 def set_paths() -> Path:
@@ -63,10 +52,10 @@ def check_key(key: str, config):
 def zip_file(path: Path):
     with ZipFile("s3-folder.zip", "a") as zip:
         zip.write(path)
-    print(f"Zipped :: {str(path)}",flush=True)
 
 
 async def main():
+    start_time = time.time()
     s3 = boto3.client("s3")
     print(config)
     bucket_name = config["bucket"]
@@ -102,9 +91,10 @@ async def main():
         await task
         print(f"{key} gonna zip")
         zip_processes.append(process_executor.submit(zip_file,Path("s3-folder").joinpath(key)))
+        print(f"{key}  zipped.")
 
-    for zipped in concurrent.futures.as_completed(zip_processes):
-        pass
+    print("--- %s seconds ---" % (time.time() - start_time))
+
 
 if __name__ == '__main__':
     asyncio.run(main())
