@@ -5,11 +5,13 @@ import asyncio
 import functools
 import time
 import re
-from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
-from zipfile import ZipFile, ZIP_DEFLATED
 from io import BytesIO
 import boto3
+import ctypes
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from zipfile import ZipFile, ZIP_DEFLATED
+import multiprocessing.sharedctypes
+from pathlib import Path
 
 from config import config
 
@@ -50,17 +52,16 @@ def check_key(key: str, config):
         return False
 
 
-def zip_file(key):
-    with lock:
-        try:
-            with ZipFile("s3-folder.zip", "a",ZIP_DEFLATED) as zip:
-                zip.write(str(key))
-            return key
-        except Exception as e:
-            # TODO Learn how to display your custom error messsages with default one.
-            message = f"While zipping file :: {key} an error occured. PID:: {multiprocessing.current_process().pid} "
-            print(message)
-            raise e
+def zip_file(key,balancer,data):
+    try:
+        with ZipFile(f"s3-folder-{balancer}.zip", "a",ZIP_DEFLATED) as zip:
+            zip.writestr(zinfo_or_arcname=key,data=data.value)
+        return key
+    except Exception as e:
+        # TODO Learn how to display your custom error messsages with default one.
+        message = f"While zipping file :: {key} an error occured. PID:: {multiprocessing.current_process().pid} "
+        print(message)
+        raise e
 
 
 async def download_and_zip(response: dict, session: dict):
@@ -72,24 +73,39 @@ async def download_and_zip(response: dict, session: dict):
 
         return io_wrapper
 
-    download_file = aio(session["s3"].download_file)
+    get_object = aio(session["s3"].get_object)
 
     tasks = []
     for obj in response["Contents"]:
         if check_key(obj["Key"], config):
             path = create_file(obj["Key"])
             tasks.append(
-                (session["loop"].create_task(download_file(config["bucket"],obj["Key"],str(path))), obj["Key"]))
+                (session["loop"].create_task(get_object(Bucket=config["bucket"],Key=obj["Key"])), obj["Key"]))
 
     zip_processes = []
+    bobin_counter = 0
+    core_number = multiprocessing.cpu_count()
     for task, key in tasks:
-        await task
+        s3_response = await task
         print(f"{key} gonna zip")
-        zip_processes.append(session["process_executor"].submit(zip_file,os.path.join("s3-folder",key)))
+        arr = bytes()
+        for chunk in s3_response["Body"].iter_chunks():
+            arr += chunk
+        manager = multiprocessing.Manager()
+        deneme = manager.Value(ctypes.c_char_p,arr,lock=False)
+        # Simple Load Balancing Algorithm
+        balancer = bobin_counter % core_number
+        zip_processes.append(session["process_executor"].submit(zip_file,key,balancer,deneme))
+        bobin_counter += 1
 
     for process in as_completed(zip_processes):
         key = process.result()
         print(f"Zipped :: {key}")
+
+    with ZipFile("s3-folder.zip","a") as zip:
+        for files in Path(os.getcwd()).rglob("s3-folder-?.zip"):
+            zip.write(str(files))
+
 
 def init(l):
     global lock
@@ -102,7 +118,7 @@ def set_session() -> dict:
         start_time=time.time(),
         thread_executor=ThreadPoolExecutor(max_workers=10),
         lock = lock,
-        process_executor=ProcessPoolExecutor(max_workers=2,initializer=init,initargs=(lock,)),
+        process_executor=ProcessPoolExecutor(max_workers=round(multiprocessing.cpu_count()/2),initializer=init,initargs=(lock,)),
         loop=asyncio.get_event_loop()
     )
 
