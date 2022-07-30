@@ -1,17 +1,16 @@
 import multiprocessing
 import sys
 import os
-import asyncio
-import functools
 import time
 import re
-from io import BytesIO
 import boto3
-import ctypes
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from threading import Lock
 from zipfile import ZipFile, ZIP_DEFLATED
 import multiprocessing.sharedctypes
 from pathlib import Path
+from random import randrange
+from ctypes import c_int
 
 from config import config
 
@@ -21,6 +20,9 @@ def set_paths() -> Path:
     path = Path(cwd) / "s3-folder"
     path.mkdir(exist_ok=True)
     return path
+
+def clean_path():
+    os.rmdir(Path(os.getcwd()).joinpath("s3-folder"))
 
 
 def create_file(key: str) -> Path:
@@ -52,78 +54,88 @@ def check_key(key: str, config):
         return False
 
 
-def zip_file(key,balancer,data):
+def zip_file(key, file_path, pid):
     try:
-        with ZipFile(f"s3-folder-{balancer}.zip", "a",ZIP_DEFLATED) as zip:
-            zip.writestr(zinfo_or_arcname=key,data=data.value)
-        return key
+        with ZipFile(f"s3-folder-{pid}.zip", "a", ZIP_DEFLATED) as zip:
+            zip.write(filename=file_path, arcname=key)
     except Exception as e:
         # TODO Learn how to display your custom error messsages with default one.
         message = f"While zipping file :: {key} an error occured. PID:: {multiprocessing.current_process().pid} "
         print(message)
-        raise e
+        raise Exception(e.args,message).with_traceback(e.__traceback__)
 
 
-async def download_and_zip(response: dict, session: dict):
-    def aio(f):
-        async def io_wrapper(*args, **kwargs):
-            bounded_f = functools.partial(f, *args, **kwargs)
-            loop = session["loop"]
-            return await loop.run_in_executor(session["thread_executor"], bounded_f)
 
-        return io_wrapper
+def download_object(object, client, lock):
+    file_name = object["Key"].split("/")[-1]
+    suffix = "." + file_name.split(".")[-1]
+    tmp_file_path = str(Path(os.getcwd()).joinpath("s3-folder",f"{randrange(10000)}{suffix}"))
+    pid = multiprocessing.current_process().pid
+    client.download_file(config["bucket"], object["Key"], tmp_file_path)
+    with lock:
+        print(f"{object['Key']} gonna zip")
+        zip_file(object["Key"], tmp_file_path, pid)
+        print(f"{object['Key']}:: ZIPPED!")
+    os.remove(tmp_file_path)
 
-    get_object = aio(session["s3"].get_object)
+def download_and_zip(objects):
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        client = boto3.client("s3")
+        lock = Lock()
+        futures = []
+        for object in objects:
+            if check_key(object["Key"], config):
+                futures.append(executor.submit(download_object, object, client, lock))
 
-    tasks = []
-    for obj in response["Contents"]:
-        if check_key(obj["Key"], config):
-            path = create_file(obj["Key"])
-            tasks.append(
-                (session["loop"].create_task(get_object(Bucket=config["bucket"],Key=obj["Key"])), obj["Key"]))
-
-    zip_processes = []
-    bobin_counter = 0
-    core_number = multiprocessing.cpu_count()
-    for task, key in tasks:
-        s3_response = await task
-        print(f"{key} gonna zip")
-        arr = bytes()
-        for chunk in s3_response["Body"].iter_chunks():
-            arr += chunk
-        manager = multiprocessing.Manager()
-        deneme = manager.Value(ctypes.c_char_p,arr,lock=False)
-        # Simple Load Balancing Algorithm
-        balancer = bobin_counter % core_number
-        zip_processes.append(session["process_executor"].submit(zip_file,key,balancer,deneme))
-        bobin_counter += 1
-
-    for process in as_completed(zip_processes):
-        key = process.result()
-        print(f"Zipped :: {key}")
-
-    with ZipFile("s3-folder.zip","a") as zip:
-        for files in Path(os.getcwd()).rglob("s3-folder-?.zip"):
-            zip.write(str(files))
+        for future in as_completed(futures):
+            COUNTER.value += 1
+            future.result()
 
 
-def init(l):
-    global lock
-    lock = l
+def init(counter):
+    global COUNTER
+    COUNTER = counter
 
 def set_session() -> dict:
-    lock = multiprocessing.Lock()
+    download_counter = multiprocessing.Value(c_int,1)
+    key_counter = 0
     return dict(
         s3=boto3.client("s3"),
-        start_time=time.time(),
-        thread_executor=ThreadPoolExecutor(max_workers=10),
-        lock = lock,
-        process_executor=ProcessPoolExecutor(max_workers=round(multiprocessing.cpu_count()/2),initializer=init,initargs=(lock,)),
-        loop=asyncio.get_event_loop()
+        thread_executor=ThreadPoolExecutor(max_workers=2),
+        process_executor=ProcessPoolExecutor(max_workers=round(multiprocessing.cpu_count() / 2),initializer=init,initargs=(download_counter,)),
+        download_counter=download_counter,
+        key_counter=key_counter
     )
 
 
-async def main():
+def processes_init(response, session):
+    i = 0
+    arr = []
+    content_arr = response["Contents"]
+    step = round(len(content_arr) / round(multiprocessing.cpu_count() / 2))
+    remainder = len(content_arr) % round(multiprocessing.cpu_count() / 2)
+
+    while i < len(content_arr):
+        if i + step >= len(content_arr) - remainder:
+            arr.append(content_arr[i:])
+            break
+        else:
+            arr.append(content_arr[i:i + step])
+        i += step
+
+    futures = [session["process_executor"].submit(download_and_zip, chunks) for chunks in arr]
+    for future in as_completed(futures):
+        future.result()
+
+    print("Zipped part Assembling..".center(60,"-"))
+    with ZipFile("s3-folder.zip","w") as zip:
+        for files in Path(os.getcwd()).rglob("s3-folder-*.zip"):
+            zip.write(filename=files,arcname=files.relative_to(Path(os.getcwd())))
+
+    session["key_counter"] += len(response["Contents"])
+
+
+def main():
     start_time = time.time()
     session = set_session()
     set_paths()
@@ -136,16 +148,17 @@ async def main():
                                                               MaxKeys=1000,
                                                               ContinuationToken=response["NextContinuationToken"])
         except Exception as e:
-            await download_and_zip(response, session)
+            processes_init(response, session)
+            print(f"Downloaded and Zipped {session['download_counter'].value}/{session['key_counter']}")
             print("--- %s seconds ---" % (time.time() - start_time))
+            clean_path()
             sys.exit(0)
 
-        await download_and_zip(response, session)
+        processes_init(response, session)
         response = next_response.result()
-
 
 try:
     if __name__ == '__main__':
-        asyncio.run(main())
+        main()
 except Exception as e:
     raise (e)
