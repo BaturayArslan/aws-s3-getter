@@ -57,10 +57,8 @@ def zip_file(key):
                 zip.write(str(key))
             return key
         except Exception as e:
-            # TODO Learn how to display your custom error messsages with default one.
             message = f"While zipping file :: {key} an error occured. PID:: {multiprocessing.current_process().pid} "
-            print(message)
-            raise e
+            raise Exception(e.args,message)
 
 
 async def download_and_zip(response: dict, session: dict):
