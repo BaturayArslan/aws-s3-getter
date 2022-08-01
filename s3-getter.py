@@ -8,7 +8,6 @@ import re
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from zipfile import ZipFile, ZIP_DEFLATED
-from io import BytesIO
 import boto3
 
 from config import config
@@ -88,6 +87,7 @@ async def download_and_zip(response: dict, session: dict):
     for process in as_completed(zip_processes):
         key = process.result()
         print(f"Zipped :: {key}")
+        session["counter"] += 1
 
 def init(l):
     global lock
@@ -95,13 +95,16 @@ def init(l):
 
 def set_session() -> dict:
     lock = multiprocessing.Lock()
+    counter = 0
+    worker = round(multiprocessing.cpu_count() / 2)
     return dict(
         s3=boto3.client("s3"),
         start_time=time.time(),
         thread_executor=ThreadPoolExecutor(max_workers=10),
         lock = lock,
-        process_executor=ProcessPoolExecutor(max_workers=2,initializer=init,initargs=(lock,)),
-        loop=asyncio.get_event_loop()
+        process_executor=ProcessPoolExecutor(max_workers=worker,initializer=init,initargs=(lock,)),
+        loop=asyncio.get_event_loop(),
+        counter=counter
     )
 
 
@@ -110,16 +113,17 @@ async def main():
     session = set_session()
     set_paths()
 
-    response = session["s3"].list_objects_v2(Bucket=config["bucket"], Prefix=config["prefix"], MaxKeys=100)
+    response = session["s3"].list_objects_v2(Bucket=config["bucket"], Prefix=config["prefix"], MaxKeys=1000)
 
     while response:
         try:
             next_response = session["thread_executor"].submit(session["s3"].list_objects_v2, Bucket=config["bucket"],
                                                               MaxKeys=1000,
                                                               ContinuationToken=response["NextContinuationToken"])
-        except Exception as e:
+        except KeyError as e:
             await download_and_zip(response, session)
             print("--- %s seconds ---" % (time.time() - start_time))
+            print("--- %d object processed---" % (session["counter"]))
             sys.exit(0)
 
         await download_and_zip(response, session)
