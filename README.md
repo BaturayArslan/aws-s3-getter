@@ -1,7 +1,7 @@
 
 # s3-getter
 
-s3-getter dowloand your s3 bucket and zip asynchronously.I added **3 branch** they are doing  **almost** same thing but each branch has sligtly\
+s3-getter dowloand your s3 bucket and zip asynchronously.I added **3 branch** they are doing  **almost** same thing but each branch has sligtly
 different design you can use whatever you want (i dont recommend using get-object-byte though that was experimantal.:))
 
 
