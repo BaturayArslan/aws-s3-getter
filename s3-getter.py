@@ -48,7 +48,8 @@ def check_response(response):
 
 
 def check_key(key: str, config):
-    if re.match(config["pattern"], key):
+    pattern = re.compile(config["pattern"])
+    if re.search(pattern, key):
         return True
     else:
         return False
