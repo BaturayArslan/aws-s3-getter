@@ -1,12 +1,12 @@
 from typing import List, Tuple, Optional, Union, Dict
-from configparser import ConfigParser
+from configparser import RawConfigParser
 import os
 from collections import defaultdict
 
 class Configs:
     def __init__(self):
         self._file_path: Optional[str] = None
-        self.cparser = ConfigParser()
+        self.cparser = RawConfigParser()
 
     def get_sections(self) -> List[str]:
         return self.cparser.sections()
