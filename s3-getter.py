@@ -59,10 +59,8 @@ def zip_file(key, file_path, pid):
         with ZipFile(f"s3-folder-{pid}.zip", "a", ZIP_DEFLATED) as zip:
             zip.write(filename=file_path, arcname=key)
     except Exception as e:
-        # TODO Learn how to display your custom error messsages with default one.
         message = f"While zipping file :: {key} an error occured. PID:: {multiprocessing.current_process().pid} "
-        print(message)
-        raise Exception(e.args,message).with_traceback(e.__traceback__)
+        raise Exception(e.args,message)
 
 
 
@@ -97,7 +95,7 @@ def init(counter):
     COUNTER = counter
 
 def set_session() -> dict:
-    download_counter = multiprocessing.Value(c_int,1)
+    download_counter = multiprocessing.Value(c_int,0)
     key_counter = 0
     return dict(
         s3=boto3.client("s3"),
@@ -127,10 +125,6 @@ def processes_init(response, session):
     for future in as_completed(futures):
         future.result()
 
-    print("Zipped part Assembling..".center(60,"-"))
-    with ZipFile("s3-folder.zip","w") as zip:
-        for files in Path(os.getcwd()).rglob("s3-folder-*.zip"):
-            zip.write(filename=files,arcname=files.relative_to(Path(os.getcwd())))
 
     session["key_counter"] += len(response["Contents"])
 
@@ -140,14 +134,14 @@ def main():
     session = set_session()
     set_paths()
 
-    response = session["s3"].list_objects_v2(Bucket=config["bucket"], Prefix=config["prefix"], MaxKeys=100)
+    response = session["s3"].list_objects_v2(Bucket=config["bucket"], Prefix=config["prefix"], MaxKeys=1000)
 
     while response:
         try:
             next_response = session["thread_executor"].submit(session["s3"].list_objects_v2, Bucket=config["bucket"],
                                                               MaxKeys=1000,
                                                               ContinuationToken=response["NextContinuationToken"])
-        except Exception as e:
+        except KeyError as e:
             processes_init(response, session)
             print(f"Downloaded and Zipped {session['download_counter'].value}/{session['key_counter']}")
             print("--- %s seconds ---" % (time.time() - start_time))
