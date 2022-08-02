@@ -98,10 +98,11 @@ def init(counter):
 def set_session() -> dict:
     download_counter = multiprocessing.Value(c_int,0)
     key_counter = 0
+    worker = round(multiprocessing.cpu_count() / 2) if round(multiprocessing.cpu_count() / 2) else 1
     return dict(
         s3=boto3.client("s3"),
         thread_executor=ThreadPoolExecutor(max_workers=2),
-        process_executor=ProcessPoolExecutor(max_workers=round(multiprocessing.cpu_count() / 2),initializer=init,initargs=(download_counter,)),
+        process_executor=ProcessPoolExecutor(max_workers=worker,initializer=init,initargs=(download_counter,)),
         download_counter=download_counter,
         key_counter=key_counter
     )
@@ -111,8 +112,9 @@ def processes_init(response, session):
     i = 0
     arr = []
     content_arr = response["Contents"]
-    step = round(len(content_arr) / round(multiprocessing.cpu_count() / 2))
-    remainder = len(content_arr) % round(multiprocessing.cpu_count() / 2)
+    cpu_count = round(multiprocessing.cpu_count() / 2) if round(multiprocessing.cpu_count() / 2) else 1
+    step = round(len(content_arr) / cpu_count)
+    remainder = len(content_arr) % cpu_count
 
     while i < len(content_arr):
         if i + step >= len(content_arr) - remainder:
