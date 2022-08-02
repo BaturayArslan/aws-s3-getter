@@ -97,7 +97,7 @@ def init(l):
 def set_session() -> dict:
     lock = multiprocessing.Lock()
     counter = 0
-    worker = round(multiprocessing.cpu_count() / 2)
+    worker = round(multiprocessing.cpu_count() / 2) if round(multiprocessing.cpu_count() / 2) else 1
     return dict(
         s3=boto3.client("s3"),
         start_time=time.time(),
